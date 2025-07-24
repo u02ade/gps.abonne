@@ -1,12 +1,10 @@
-let allData = [];
-let currentPage = 1;
-const rowsPerPage = 10;
-let map, markersLayer;
+let map;
+let markersLayer = L.layerGroup();
+let customers = [];
 
 document.getElementById("fileInput").addEventListener("change", handleFile);
-document.getElementById("searchInput").addEventListener("input", renderTable);
-document.getElementById("exportBtn").addEventListener("click", exportToExcel);
-document.getElementById("locateMeBtn").addEventListener("click", locateMe);
+document.getElementById("filterNoGPS").addEventListener("click", toggleNoGPS);
+document.getElementById("locateMe").addEventListener("click", locateUser);
 
 function handleFile(event) {
   const file = event.target.files[0];
@@ -14,128 +12,113 @@ function handleFile(event) {
 
   const reader = new FileReader();
   reader.onload = function (e) {
-    const lines = e.target.result.split("\n");
-    allData = [];
-
-    for (let line of lines) {
-      const parts = line.trim().split("\t");
-      if (parts.length < 5) continue;
-
-      // اكمل الأعمدة إن كانت ناقصة (GPS_X و GPS_Y)
-      while (parts.length < 7) parts.push("");
-
-      const [TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y] = parts;
-      if (TOURNEE || NUMAB || RAISOC || ADRESSE || NUMSER)
-        allData.push({ TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y });
-    }
-
-    currentPage = 1;
-    renderTable();
-    renderMap();
+    const lines = e.target.result.split("\n").filter(line => line.trim() !== "");
+    customers = lines.map(line => {
+      const parts = line.split("\t");
+      return {
+        tournee: parts[0] || "",
+        code: parts[1] || "",
+        name: parts[2] || "",
+        address: parts[3] || "",
+        compteur: parts[4] || "",
+        lng: parts[5] || "",
+        lat: parts[6] || ""
+      };
+    });
+    displayCustomers(customers);
+    updateMap(customers);
   };
-
   reader.readAsText(file);
 }
 
-function renderTable() {
-  const searchValue = document.getElementById("searchInput").value.trim();
-  const tbody = document.querySelector("#dataTable tbody");
-  tbody.innerHTML = "";
+function displayCustomers(data) {
+  const tableBody = document.querySelector("#customerTable tbody");
+  tableBody.innerHTML = "";
 
-  const filtered = allData.filter((row) => {
-    const combined = `${row.NUMAB} ${row.RAISOC} ${row.NUMSER} ${row.ADRESSE}`;
-    return combined.includes(searchValue);
-  });
-
-  const total = filtered.length;
-  const gpsCount = filtered.filter((r) => r.GPS_X && r.GPS_Y).length;
-
-  document.getElementById("totalCount").textContent = total;
-  document.getElementById("gpsCount").textContent = gpsCount;
-
-  const start = (currentPage - 1) * rowsPerPage;
-  const end = start + rowsPerPage;
-  const pageData = filtered.slice(start, end);
-
-  for (let row of pageData) {
-    const tr = document.createElement("tr");
-
-    // لون خاص لمن ليس لديهم GPS
-    if (!row.GPS_X || !row.GPS_Y) {
-      tr.classList.add("table-warning");
+  data.forEach(c => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${c.tournee}</td>
+      <td>${c.code}</td>
+      <td>${c.name}</td>
+      <td>${c.address}</td>
+      <td>${c.compteur}</td>
+      <td>${c.lat}</td>
+      <td>${c.lng}</td>
+    `;
+    // Highlight customers without GPS
+    if (!c.lat || !c.lng) {
+      row.style.backgroundColor = "#ffdddd";
     }
-
-    ["TOURNEE", "NUMAB", "RAISOC", "ADRESSE", "NUMSER", "GPS_X", "GPS_Y"].forEach((key) => {
-      const td = document.createElement("td");
-      td.textContent = row[key];
-      tr.appendChild(td);
-    });
-
-    tbody.appendChild(tr);
-  }
-
-  renderPagination(filtered.length);
+    tableBody.appendChild(row);
+  });
 }
 
-function renderPagination(totalRows) {
-  const totalPages = Math.ceil(totalRows / rowsPerPage);
-  const pagination = document.getElementById("pagination");
-  pagination.innerHTML = "";
-
-  for (let i = 1; i <= totalPages; i++) {
-    const li = document.createElement("li");
-    li.className = "page-item" + (i === currentPage ? " active" : "");
-    li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
-    li.addEventListener("click", (e) => {
-      e.preventDefault();
-      currentPage = i;
-      renderTable();
-    });
-    pagination.appendChild(li);
-  }
-}
-
-function exportToExcel() {
-  const ws = XLSX.utils.json_to_sheet(allData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Clients");
-  XLSX.writeFile(wb, "clients.xlsx");
-}
-
-function renderMap() {
-  if (!map) {
-    map = L.map("map").setView([36.1653, 1.3340], 13); // الشلف مركز
-    L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
-      subdomains: ["mt0", "mt1", "mt2", "mt3"],
-      maxZoom: 20,
-    }).addTo(map);
-  }
-
-  if (markersLayer) {
-    markersLayer.clearLayers();
-  } else {
-    markersLayer = L.layerGroup().addTo(map);
-  }
-
-  allData.forEach((row) => {
-    if (row.GPS_X && row.GPS_Y) {
-      const marker = L.marker([parseFloat(row.GPS_Y), parseFloat(row.GPS_X)]);
-      marker.bindPopup(`<strong>${row.RAISOC}</strong><br>${row.ADRESSE}`);
+function updateMap(data) {
+  markersLayer.clearLayers();
+  data.forEach(c => {
+    if (c.lat && c.lng) {
+      const marker = L.marker([c.lat, c.lng]).bindPopup(`
+        <strong>${c.name}</strong><br>${c.address}<br>🧾 ${c.compteur}
+      `);
       markersLayer.addLayer(marker);
     }
   });
 }
 
-function locateMe() {
-  if (!navigator.geolocation) return alert("الموقع غير مدعوم");
+function toggleNoGPS() {
+  const showOnlyNoGPS = document.getElementById("filterNoGPS").classList.toggle("active");
+  const filtered = showOnlyNoGPS
+    ? customers.filter(c => !c.lat || !c.lng)
+    : customers;
+  displayCustomers(filtered);
+  updateMap(filtered);
+}
+
+function locateUser() {
+  if (!navigator.geolocation) {
+    alert("⚠️ المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
 
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
+    pos => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
       map.setView([lat, lng], 18);
-      L.marker([lat, lng]).addTo(map).bindPopup("📍 موقعي الحالي").openPopup();
+      L.marker([lat, lng], { icon: L.icon({
+        iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -32]
+      })})
+        .addTo(map)
+        .bindPopup("📍 موقعك الحالي")
+        .openPopup();
     },
-    () => alert("تعذر تحديد الموقع")
+    err => {
+      alert("⚠️ تعذر تحديد موقعك.");
+      console.error(err);
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    }
   );
 }
+
+window.onload = () => {
+  map = L.map("map").setView([36.1667, 1.3333], 13); // موقع الشلف مركز
+
+  const satelliteLayer = L.tileLayer(
+    "https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+    {
+      maxZoom: 20,
+      subdomains: ["mt0", "mt1", "mt2", "mt3"],
+      attribution: "© Google"
+    }
+  );
+  satelliteLayer.addTo(map);
+  markersLayer.addTo(map);
+};
