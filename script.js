@@ -1,158 +1,141 @@
-let data = [];
-let filteredData = [];
+let allData = [];
 let currentPage = 1;
 const rowsPerPage = 10;
-let showOnlyNoGPS = false;
-let map, markers = [];
+let map, markersLayer;
 
-document.getElementById('fileInput').addEventListener('change', handleFile);
-document.getElementById('searchInput').addEventListener('input', handleSearch);
-document.getElementById('toggleNoGPS').addEventListener('click', toggleNoGPS);
-document.getElementById('exportBtn').addEventListener('click', exportToExcel);
-document.getElementById('locateMeBtn').addEventListener('click', locateUser);
+document.getElementById("fileInput").addEventListener("change", handleFile);
+document.getElementById("searchInput").addEventListener("input", renderTable);
+document.getElementById("exportBtn").addEventListener("click", exportToExcel);
+document.getElementById("locateMeBtn").addEventListener("click", locateMe);
 
-function handleFile(e) {
-  const file = e.target.files[0];
+function handleFile(event) {
+  const file = event.target.files[0];
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = function (event) {
-    const lines = event.target.result.split('\n').map(line => line.trim()).filter(line => line);
-    data = lines.map(line => {
-      const parts = line.split('\t');
-      return {
-        tournee: parts[0] || '',
-        numab: parts[1] || '',
-        raisoc: parts[2] || '',
-        adresse: parts[3] || '',
-        numser: parts[4] || '',
-        gps_x: parts[5] || '',
-        gps_y: parts[6] || ''
-      };
-    });
-    filteredData = [...data];
-    updateTable();
-    updateMap();
+  reader.onload = function (e) {
+    const lines = e.target.result.split("\n");
+    allData = [];
+
+    for (let line of lines) {
+      const parts = line.trim().split("\t");
+      if (parts.length < 5) continue;
+
+      // اكمل الأعمدة إن كانت ناقصة (GPS_X و GPS_Y)
+      while (parts.length < 7) parts.push("");
+
+      const [TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y] = parts;
+      if (TOURNEE || NUMAB || RAISOC || ADRESSE || NUMSER)
+        allData.push({ TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y });
+    }
+
+    currentPage = 1;
+    renderTable();
+    renderMap();
   };
+
   reader.readAsText(file);
 }
 
-function updateTable() {
-  const tbody = document.querySelector('#dataTable tbody');
-  tbody.innerHTML = '';
+function renderTable() {
+  const searchValue = document.getElementById("searchInput").value.trim();
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
 
-  const totalCount = filteredData.length;
-  const gpsCount = filteredData.filter(r => r.gps_x && r.gps_y).length;
-  document.getElementById('totalCount').textContent = totalCount;
-  document.getElementById('gpsCount').textContent = gpsCount;
-
-  const start = (currentPage - 1) * rowsPerPage;
-  const paginatedData = filteredData.slice(start, start + rowsPerPage);
-
-  paginatedData.forEach(row => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${row.tournee}</td>
-      <td>${row.numab}</td>
-      <td>${row.raisoc}</td>
-      <td>${row.adresse}</td>
-      <td>${row.numser}</td>
-      <td>${row.gps_x}</td>
-      <td>${row.gps_y}</td>
-    `;
-    tbody.appendChild(tr);
+  const filtered = allData.filter((row) => {
+    const combined = `${row.NUMAB} ${row.RAISOC} ${row.NUMSER} ${row.ADRESSE}`;
+    return combined.includes(searchValue);
   });
 
-  updatePagination();
+  const total = filtered.length;
+  const gpsCount = filtered.filter((r) => r.GPS_X && r.GPS_Y).length;
+
+  document.getElementById("totalCount").textContent = total;
+  document.getElementById("gpsCount").textContent = gpsCount;
+
+  const start = (currentPage - 1) * rowsPerPage;
+  const end = start + rowsPerPage;
+  const pageData = filtered.slice(start, end);
+
+  for (let row of pageData) {
+    const tr = document.createElement("tr");
+
+    // لون خاص لمن ليس لديهم GPS
+    if (!row.GPS_X || !row.GPS_Y) {
+      tr.classList.add("table-warning");
+    }
+
+    ["TOURNEE", "NUMAB", "RAISOC", "ADRESSE", "NUMSER", "GPS_X", "GPS_Y"].forEach((key) => {
+      const td = document.createElement("td");
+      td.textContent = row[key];
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  }
+
+  renderPagination(filtered.length);
 }
 
-function updatePagination() {
-  const totalPages = Math.ceil(filteredData.length / rowsPerPage);
-  const pagination = document.getElementById('pagination');
-  pagination.innerHTML = '';
+function renderPagination(totalRows) {
+  const totalPages = Math.ceil(totalRows / rowsPerPage);
+  const pagination = document.getElementById("pagination");
+  pagination.innerHTML = "";
 
   for (let i = 1; i <= totalPages; i++) {
-    const li = document.createElement('li');
-    li.className = 'page-item' + (i === currentPage ? ' active' : '');
-    const btn = document.createElement('button');
-    btn.className = 'page-link';
-    btn.textContent = i;
-    btn.onclick = () => {
+    const li = document.createElement("li");
+    li.className = "page-item" + (i === currentPage ? " active" : "");
+    li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+    li.addEventListener("click", (e) => {
+      e.preventDefault();
       currentPage = i;
-      updateTable();
-    };
-    li.appendChild(btn);
+      renderTable();
+    });
     pagination.appendChild(li);
   }
 }
 
-function handleSearch() {
-  const query = document.getElementById('searchInput').value.toLowerCase();
-  filteredData = data.filter(row =>
-    row.tournee.toLowerCase().includes(query) ||
-    row.numab.toLowerCase().includes(query) ||
-    row.raisoc.toLowerCase().includes(query) ||
-    row.adresse.toLowerCase().includes(query) ||
-    row.numser.toLowerCase().includes(query)
-  );
-  if (showOnlyNoGPS) {
-    filteredData = filteredData.filter(r => !r.gps_x || !r.gps_y);
-  }
-  currentPage = 1;
-  updateTable();
-  updateMap();
-}
-
-function toggleNoGPS() {
-  showOnlyNoGPS = !showOnlyNoGPS;
-  handleSearch();
-}
-
 function exportToExcel() {
-  const ws = XLSX.utils.json_to_sheet(filteredData);
+  const ws = XLSX.utils.json_to_sheet(allData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Clients");
   XLSX.writeFile(wb, "clients.xlsx");
 }
 
-function locateUser() {
-  if (!navigator.geolocation) {
-    alert('المتصفح لا يدعم تحديد الموقع');
-    return;
+function renderMap() {
+  if (!map) {
+    map = L.map("map").setView([36.1653, 1.3340], 13); // الشلف مركز
+    L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+      subdomains: ["mt0", "mt1", "mt2", "mt3"],
+      maxZoom: 20,
+    }).addTo(map);
   }
 
-  navigator.geolocation.getCurrentPosition(pos => {
-    const lat = pos.coords.latitude;
-    const lon = pos.coords.longitude;
-    L.marker([lat, lon], { title: "موقعي الحالي", icon: L.icon({
-      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
-      iconSize: [32, 32],
-      iconAnchor: [16, 32]
-    }) }).addTo(map).bindPopup("📍 موقعي الحالي").openPopup();
-    map.setView([lat, lon], 15);
-  }, err => {
-    alert("تعذر تحديد الموقع: " + err.message);
+  if (markersLayer) {
+    markersLayer.clearLayers();
+  } else {
+    markersLayer = L.layerGroup().addTo(map);
+  }
+
+  allData.forEach((row) => {
+    if (row.GPS_X && row.GPS_Y) {
+      const marker = L.marker([parseFloat(row.GPS_Y), parseFloat(row.GPS_X)]);
+      marker.bindPopup(`<strong>${row.RAISOC}</strong><br>${row.ADRESSE}`);
+      markersLayer.addLayer(marker);
+    }
   });
 }
 
-function updateMap() {
-  if (!map) {
-    map = L.map('map').setView([36.167, 1.334], 13); // مركز مدينة الشلف
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, etc.',
-    maxZoom: 19
-}).addTo(map);
+function locateMe() {
+  if (!navigator.geolocation) return alert("الموقع غير مدعوم");
 
-  }
-
-  markers.forEach(marker => map.removeLayer(marker));
-  markers = [];
-
-  filteredData.forEach(row => {
-    if (row.gps_x && row.gps_y) {
-      const marker = L.marker([parseFloat(row.gps_x), parseFloat(row.gps_y)]).addTo(map)
-        .bindPopup(`<strong>${row.raisoc}</strong><br>${row.adresse}<br>${row.numab}`);
-      markers.push(marker);
-    }
-  });
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      map.setView([lat, lng], 18);
+      L.marker([lat, lng]).addTo(map).bindPopup("📍 موقعي الحالي").openPopup();
+    },
+    () => alert("تعذر تحديد الموقع")
+  );
 }
