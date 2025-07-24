@@ -1,150 +1,167 @@
-let data = [];
-let map, marker;
+let allData = [];
 let currentPage = 1;
-const rowsPerPage = 10;
+const rowsPerPage = 10; // ← تم تقليل عدد الأسطر لكل صفحة هنا
 
-function renderTable() {
-  const tbody = document.querySelector("#dataTable tbody");
-  tbody.innerHTML = "";
-  const start = (currentPage - 1) * rowsPerPage;
-  const pageData = data.slice(start, start + rowsPerPage);
+const map = L.map('map').setView([36.1679, 1.3346], 13);
 
-  pageData.forEach((row, index) => {
-    const tr = document.createElement("tr");
-    row.forEach((cell) => {
-      const td = document.createElement("td");
-      td.textContent = cell;
-      tr.appendChild(td);
-    });
+// 🛰️ خريطة الأقمار الصناعية (ESRI)
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: '© ESRI',
+  maxZoom: 20
+}).addTo(map);
 
-    if (row[5] && row[6]) {
-      tr.classList.add("has-gps");
-    }
+const markersLayer = L.layerGroup().addTo(map);
 
-    tr.addEventListener("click", () => {
-      document.querySelectorAll("#dataTable tbody tr").forEach((r) =>
-        r.classList.remove("selected-row")
-      );
-      tr.classList.add("selected-row");
+document.getElementById('fileInput').addEventListener('change', handleFile);
+document.getElementById('searchInput').addEventListener('input', renderTable);
+document.getElementById('exportBtn').addEventListener('click', exportToExcel);
+document.getElementById('locateMeBtn').addEventListener('click', locateMe);
 
-      if (row[5] && row[6]) {
-        const lat = parseFloat(row[5]);
-        const lng = parseFloat(row[6]);
-        map.setView([lat, lng], 17);
-        if (marker) marker.remove();
-        marker = L.marker([lat, lng]).addTo(map);
-      }
-    });
+const checkbox = document.createElement('input');
+checkbox.type = 'checkbox';
+checkbox.id = 'noGpsOnly';
+checkbox.classList.add('form-check-input', 'ms-2');
+checkbox.addEventListener('change', renderTable);
 
-    tbody.appendChild(tr);
-  });
+const label = document.createElement('label');
+label.htmlFor = 'noGpsOnly';
+label.classList.add('form-check-label');
+label.textContent = '📌 عرض فقط الزبائن بدون GPS';
 
-  document.getElementById("totalCount").textContent = data.length;
-  document.getElementById("gpsCount").textContent = data.filter((r) => r[5] && r[6]).length;
+const container = document.createElement('div');
+container.classList.add('form-check', 'form-switch', 'mb-3');
+container.appendChild(checkbox);
+container.appendChild(label);
+document.querySelector('body').insertBefore(container, document.getElementById('dataTable'));
 
-  renderPagination();
-}
-
-function renderPagination() {
-  const totalPages = Math.ceil(data.length / rowsPerPage);
-  const pagination = document.getElementById("pagination");
-  pagination.innerHTML = "";
-
-  for (let i = 1; i <= totalPages; i++) {
-    const li = document.createElement("li");
-    li.className = "page-item" + (i === currentPage ? " active" : "");
-    const a = document.createElement("a");
-    a.className = "page-link";
-    a.textContent = i;
-    a.href = "#";
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      currentPage = i;
-      renderTable();
-    });
-    li.appendChild(a);
-    pagination.appendChild(li);
-  }
-}
-
-function filterData(keyword) {
-  currentPage = 1;
-  const lower = keyword.toLowerCase();
-  data = originalData.filter((row) =>
-    row.some((cell) => cell.toLowerCase().includes(lower))
-  );
-  renderTable();
-}
-
-const searchInput = document.getElementById("searchInput");
-searchInput.addEventListener("input", (e) => {
-  filterData(e.target.value);
-});
-
-let originalData = [];
-document.getElementById("fileInput").addEventListener("change", function (e) {
-  const file = e.target.files[0];
+function handleFile(event) {
+  const file = event.target.files[0];
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = function (event) {
-    const text = event.target.result;
-    const lines = text.trim().split("\n");
-
-    originalData = lines.map((line) => {
-      const parts = line.split("\t").slice(0, 7);
-      while (parts.length < 7) parts.push("");
-      return parts;
-    });
-    data = [...originalData];
+  reader.onload = function (e) {
+    const lines = e.target.result.split('\n').filter(line => line.trim() !== '');
+    allData = lines.map(line => {
+      const [TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y] = line.split('\t');
+      return { TOURNEE, NUMAB, RAISOC, ADRESSE, NUMSER, GPS_X, GPS_Y };
+    }).filter(row => Object.values(row).some(cell => cell && cell.trim() !== ''));
     currentPage = 1;
     renderTable();
   };
   reader.readAsText(file);
-});
+}
 
-document.getElementById("exportBtn").addEventListener("click", () => {
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Clients");
-  XLSX.writeFile(wb, "clients.xlsx");
-});
+function renderTable() {
+  const searchValue = document.getElementById('searchInput').value.trim().toLowerCase();
+  const showNoGpsOnly = document.getElementById('noGpsOnly').checked;
 
-// 🗺️ إعداد الخريطة
-map = L.map("map").setView([36.165, 1.334], 13);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: 'Map data © OpenStreetMap contributors'
-}).addTo(map);
+  const filteredData = allData.filter(row => {
+    const matchesSearch = Object.values(row).some(val =>
+      val && val.toLowerCase().includes(searchValue)
+    );
+    const hasGPS = row.GPS_X && row.GPS_Y && !isNaN(row.GPS_X) && !isNaN(row.GPS_Y);
+    return matchesSearch && (!showNoGpsOnly || !hasGPS);
+  });
 
-// 📍 إدخال GPS بالنقر على الخريطة
-map.on("click", (e) => {
-  const selected = document.querySelector("tr.selected-row");
-  if (!selected) return;
-  const index = [...selected.parentNode.children].indexOf(selected) + (currentPage - 1) * rowsPerPage;
-  data[index][5] = e.latlng.lat.toFixed(6);
-  data[index][6] = e.latlng.lng.toFixed(6);
-  renderTable();
-});
+  const tableBody = document.querySelector('#dataTable tbody');
+  tableBody.innerHTML = '';
 
-// 🧭 زر تحديد موقعي الحالي
-document.getElementById("locateMeBtn").addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    alert("المتصفح لا يدعم تحديد الموقع الجغرافي.");
-    return;
-  }
+  const totalCount = filteredData.length;
+  const gpsCount = filteredData.filter(row => row.GPS_X && row.GPS_Y && !isNaN(row.GPS_X) && !isNaN(row.GPS_Y)).length;
 
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
+  document.getElementById('totalCount').textContent = totalCount;
+  document.getElementById('gpsCount').textContent = gpsCount;
 
-      if (marker) marker.remove();
-      marker = L.marker([lat, lng]).addTo(map).bindPopup("📍 موقعك الحالي").openPopup();
-      map.setView([lat, lng], 16);
-    },
-    (error) => {
-      alert("فشل في تحديد الموقع: " + error.message);
+  const start = (currentPage - 1) * rowsPerPage;
+  const paginatedData = filteredData.slice(start, start + rowsPerPage);
+
+  paginatedData.forEach(row => {
+    const tr = document.createElement('tr');
+    if (!row.GPS_X || !row.GPS_Y || isNaN(row.GPS_X) || isNaN(row.GPS_Y)) {
+      tr.classList.add('table-warning');
     }
-  );
-});
+    tr.innerHTML = `
+      <td>${row.TOURNEE || ''}</td>
+      <td>${row.NUMAB || ''}</td>
+      <td>${row.RAISOC || ''}</td>
+      <td>${row.ADRESSE || ''}</td>
+      <td>${row.NUMSER || ''}</td>
+      <td>${row.GPS_X || ''}</td>
+      <td>${row.GPS_Y || ''}</td>
+    `;
+    tableBody.appendChild(tr);
+  });
+
+  renderPagination(filteredData.length);
+  updateMapMarkers(paginatedData);
+}
+
+function renderPagination(totalRows) {
+  const pageCount = Math.ceil(totalRows / rowsPerPage);
+  const pagination = document.getElementById('pagination');
+  pagination.innerHTML = '';
+
+  for (let i = 1; i <= pageCount; i++) {
+    const li = document.createElement('li');
+    li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+    li.innerHTML = `<button class="page-link">${i}</button>`;
+    li.addEventListener('click', () => {
+      currentPage = i;
+      renderTable();
+    });
+    pagination.appendChild(li);
+  }
+}
+
+function updateMapMarkers(data) {
+  markersLayer.clearLayers();
+  data.forEach(row => {
+    const lat = parseFloat(row.GPS_Y);
+    const lng = parseFloat(row.GPS_X);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      const marker = L.marker([lat, lng]).addTo(markersLayer);
+      marker.bindPopup(`<strong>${row.RAISOC || ''}</strong><br>${row.ADRESSE || ''}<br>📍 ${lat}, ${lng}`);
+    }
+  });
+
+  const validPoints = data
+    .map(row => {
+      const lat = parseFloat(row.GPS_Y);
+      const lng = parseFloat(row.GPS_X);
+      return (!isNaN(lat) && !isNaN(lng)) ? [lat, lng] : null;
+    })
+    .filter(point => point !== null);
+
+  if (validPoints.length > 0) {
+    const bounds = L.latLngBounds(validPoints);
+    map.fitBounds(bounds, { padding: [50, 50] });
+  }
+}
+
+function exportToExcel() {
+  const table = document.getElementById('dataTable');
+  const wb = XLSX.utils.table_to_book(table, { sheet: "زبائن" });
+  XLSX.writeFile(wb, 'الزبائن.xlsx');
+}
+
+function locateMe() {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const { latitude, longitude } = position.coords;
+        const userMarker = L.marker([latitude, longitude], {
+          icon: L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/61/61168.png',
+            iconSize: [30, 30],
+            iconAnchor: [15, 30]
+          })
+        }).addTo(map);
+        userMarker.bindPopup("📍 موقعك الحالي").openPopup();
+        map.setView([latitude, longitude], 15);
+      },
+      () => alert("❌ فشل في تحديد الموقع.")
+    );
+  } else {
+    alert("❌ المتصفح لا يدعم تحديد الموقع.");
+  }
+}
